@@ -1,4 +1,4 @@
-module github.com/kuwa72/m
+module github.com/kuwa72/matcher
 
 go 1.16
 
