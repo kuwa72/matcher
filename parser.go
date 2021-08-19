@@ -6,7 +6,6 @@ import (
 
 	"github.com/alecthomas/participle/v2"
 	"github.com/alecthomas/participle/v2/lexer"
-	"github.com/alecthomas/participle/v2/lexer/stateful"
 )
 
 type Boolean bool
@@ -112,7 +111,7 @@ type Value struct {
 }
 
 func NewParser() *participle.Parser {
-	qLexer := lexer.Must(stateful.NewSimple([]stateful.Rule{
+	qLexer := lexer.Must(lexer.NewSimple([]lexer.Rule{
 		{`Keyword`, `(?i)TRUE|FALSE|AND|OR`, nil},
 		{`Ident`, `[a-zA-Z_][a-zA-Z0-9_]*`, nil},
 		{`Number`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`, nil},
