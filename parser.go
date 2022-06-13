@@ -63,16 +63,14 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 	case "=":
 		v := x.Compare.Value
 		switch {
-		case v.Number != nil:
+		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float64:
-				return int(x) == *v.Number, nil
-			case int:
-				return x == *v.Number, nil
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				return x == *v.Float, nil
 			case string:
-				return x == strconv.Itoa(*v.Number), nil
+				return x == fmt.Sprintf("%f", *v.Float), nil
 			case bool:
-				return x && *v.Number != 0 || !x && *v.Number == 0, nil // 0 is false, otherwise true
+				return x && *v.Float != 0 || !x && *v.Float == 0, nil // 0 is false, otherwise true
 			}
 		case v.String != nil:
 			return ctxVal == *v.String, nil
@@ -85,17 +83,140 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 			case string:
 				b, err := strconv.ParseBool(x)
 				if err != nil {
-					return false, fmt.Errorf("Is not bool value:%s, %w", x, err)
+					return false, fmt.Errorf("is not bool value:%s, %w", x, err)
 				}
 				return b == *v.Boolean, nil
 			}
 		default:
-			return false, fmt.Errorf("Unknown value type: %#v", v)
+			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
+	case "<>", "!=":
+		v := x.Compare.Value
+		switch {
+		case v.Float != nil:
+			switch x := ctxVal.(type) {
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				return x != *v.Float, nil
+			case string:
+				return x != fmt.Sprintf("%f", *v.Float), nil
+			case bool:
+				return !(x && *v.Float != 0 || !x && *v.Float == 0), nil // 0 is false, otherwise true
+			}
+		case v.String != nil:
+			return ctxVal != *v.String, nil
+		case v.Boolean != nil:
+			switch x := ctxVal.(type) {
+			case int:
+				return !(x == 0 && !(*v.Boolean) || x != 0 && (*v.Boolean)), nil // 0 is false, otherwise true
+			case bool:
+				return x != *v.Boolean, nil
+			case string:
+				b, err := strconv.ParseBool(x)
+				if err != nil {
+					return false, fmt.Errorf("is not bool value:%s, %w", x, err)
+				}
+				return b != *v.Boolean, nil
+			}
+		default:
+			return false, fmt.Errorf("unknown value type: %#v", v)
+		}
+
+	case ">":
+		v := x.Compare.Value
+		switch {
+		case v.Float != nil:
+			switch x := ctxVal.(type) {
+			case float32, float64:
+				return x.(float64) > *v.Float, nil
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				i := x.(int64)
+				return float64(i) > *v.Float, nil
+			case string:
+				return string(x) > fmt.Sprintf("%f", *v.Float), nil
+			case bool:
+				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			}
+		case v.String != nil:
+			return ctxVal.(string) > *v.String, nil
+		case v.Boolean != nil:
+			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+		default:
+			return false, fmt.Errorf("unknown value type: %#v", v)
+		}
+
+	case ">=":
+		v := x.Compare.Value
+		switch {
+		case v.Float != nil:
+			switch x := ctxVal.(type) {
+			case float32, float64:
+				return x.(float64) >= *v.Float, nil
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				i := x.(int64)
+				return float64(i) >= *v.Float, nil
+			case string:
+				return string(x) >= fmt.Sprintf("%f", *v.Float), nil
+			case bool:
+				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			}
+		case v.String != nil:
+			return ctxVal.(string) >= *v.String, nil
+		case v.Boolean != nil:
+			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+		default:
+			return false, fmt.Errorf("unknown value type: %#v", v)
+		}
+
+	case "<":
+		v := x.Compare.Value
+		switch {
+		case v.Float != nil:
+			switch x := ctxVal.(type) {
+			case float32, float64:
+				return x.(float64) < *v.Float, nil
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				i := x.(int64)
+				return float64(i) < *v.Float, nil
+			case string:
+				return string(x) < fmt.Sprintf("%f", *v.Float), nil
+			case bool:
+				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			}
+		case v.String != nil:
+			return ctxVal.(string) < *v.String, nil
+		case v.Boolean != nil:
+			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+		default:
+			return false, fmt.Errorf("unknown value type: %#v", v)
+		}
+
+	case "<=":
+		v := x.Compare.Value
+		switch {
+		case v.Float != nil:
+			switch x := ctxVal.(type) {
+			case float32, float64:
+				return x.(float64) <= *v.Float, nil
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				i := x.(int64)
+				return float64(i) <= *v.Float, nil
+			case string:
+				return string(x) <= fmt.Sprintf("%f", *v.Float), nil
+			case bool:
+				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			}
+		case v.String != nil:
+			return ctxVal.(string) <= *v.String, nil
+		case v.Boolean != nil:
+			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+		default:
+			return false, fmt.Errorf("unknown value type: %#v", v)
+		}
+
 	default:
-		return false, fmt.Errorf("Unknown operator: %s", o)
+		return false, fmt.Errorf("unknown operator: %s", o)
 	}
-	return false, fmt.Errorf("Failed to complation, type: %T: %#v", ctxVal, ctxVal)
+	return false, fmt.Errorf("failed to complation, type: %T: %#v", ctxVal, ctxVal)
 }
 
 type Compare struct {
@@ -104,17 +225,17 @@ type Compare struct {
 }
 
 type Value struct {
-	Number  *int    `( @Number`
-	String  *string ` | @String`
-	Boolean *bool   ` | @("TRUE" | "FALSE")`
-	Null    bool    ` | @"NULL" )`
+	Float   *float64 `( @Float `
+	String  *string  ` | @String`
+	Boolean *bool    ` | @("TRUE" | "FALSE")`
+	Null    bool     ` | @"NULL" )`
 }
 
 func NewParser() *participle.Parser {
 	qLexer := lexer.Must(lexer.NewSimple([]lexer.Rule{
 		{`Keyword`, `(?i)TRUE|FALSE|AND|OR`, nil},
 		{`Ident`, `[a-zA-Z_][a-zA-Z0-9_]*`, nil},
-		{`Number`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`, nil},
+		{`Float`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`, nil},
 		{`String`, `'[^']*'|"[^"]*"`, nil},
 		{`Operators`, `<>|!=|<=|>=|[-+*/%,.()=<>]`, nil},
 		{"whitespace", `\s+`, nil},

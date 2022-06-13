@@ -35,6 +35,8 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	fmt.Printf("QUERY: %#v\n", cli.QUERY)
+	fmt.Printf("JSON structure: %#v\n", c)
 	switch {
 	case b:
 		fmt.Println("matched")
