@@ -232,14 +232,14 @@ type Value struct {
 }
 
 func NewParser() *participle.Parser {
-	qLexer := lexer.Must(lexer.NewSimple([]lexer.Rule{
-		{`Keyword`, `(?i)TRUE|FALSE|AND|OR`, nil},
-		{`Ident`, `[a-zA-Z_][a-zA-Z0-9_]*`, nil},
-		{`Float`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`, nil},
-		{`String`, `'[^']*'|"[^"]*"`, nil},
-		{`Operators`, `<>|!=|<=|>=|[-+*/%,.()=<>]`, nil},
-		{"whitespace", `\s+`, nil},
-	}))
+	qLexer := lexer.MustSimple([]lexer.SimpleRule{
+		{`Keyword`, `(?i)TRUE|FALSE|AND|OR`},
+		{`Ident`, `[a-zA-Z_][a-zA-Z0-9_]*`},
+		{`Float`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`},
+		{`String`, `'[^']*'|"[^"]*"`},
+		{`Operators`, `<>|!=|<=|>=|[-+*/%,.()=<>]`},
+		{"whitespace", `\s+`},
+	})
 	return participle.MustBuild(
 		&Expression{},
 		participle.Lexer(qLexer),
