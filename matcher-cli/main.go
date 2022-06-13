@@ -40,7 +40,9 @@ func main() {
 	switch {
 	case b:
 		fmt.Println("matched")
+		os.Exit(0)
 	default:
 		fmt.Println("Unmatched")
+		os.Exit(1)
 	}
 }
