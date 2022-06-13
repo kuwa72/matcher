@@ -65,8 +65,10 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				return x == *v.Float, nil
+			case float32, float64:
+				return x.(float64) == *v.Float, nil
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				return (float64)(x.(int)) == *v.Float, nil
 			case string:
 				return x == fmt.Sprintf("%f", *v.Float), nil
 			case bool:
@@ -95,8 +97,10 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				return x != *v.Float, nil
+			case float32, float64:
+				return x.(float64) != *v.Float, nil
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				return (float64)(x.(int)) != *v.Float, nil
 			case string:
 				return x != fmt.Sprintf("%f", *v.Float), nil
 			case bool:
