@@ -119,6 +119,104 @@ func TestComplexMatcher(t *testing.T) {
 	}
 }
 
+func TestParenthesesGrouping(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		json  string
+		match bool
+	}{
+		{
+			name:  "Simple parentheses",
+			query: "(a = 1)", 
+			json:  "{\"a\":1}", 
+			match: true,
+		},
+		{
+			name:  "Parentheses with AND",
+			query: "(a = 1 AND b = 2)", 
+			json:  "{\"a\":1, \"b\":2}", 
+			match: true,
+		},
+		{
+			name:  "Parentheses with OR",
+			query: "(a = 1 OR b = 2)", 
+			json:  "{\"a\":1, \"b\":3}", 
+			match: true,
+		},
+		{
+			name:  "Parentheses changing precedence",
+			query: "a = 1 AND (b = 2 OR c = 3)", 
+			json:  "{\"a\":1, \"b\":5, \"c\":3}", 
+			match: true,
+		},
+		{
+			name:  "Parentheses changing precedence - false case",
+			query: "a = 1 AND (b = 2 OR c = 3)", 
+			json:  "{\"a\":1, \"b\":5, \"c\":5}", 
+			match: false,
+		},
+		{
+			name:  "Multiple nested parentheses",
+			query: "(a = 1 AND (b > 5 OR (c = 3 AND d = 4)))", 
+			json:  "{\"a\":1, \"b\":3, \"c\":3, \"d\":4}", 
+			match: true,
+		},
+		{
+			name:  "Complex expression with parentheses",
+			query: "(a = 1 OR a = 2) AND (b = 3 OR b = 4)", 
+			json:  "{\"a\":2, \"b\":3}", 
+			match: true,
+		},
+		{
+			name:  "Precedence without vs with parentheses",
+			query: "a = 1 OR b = 2 AND c = 3", // Equivalent to: a = 1 OR (b = 2 AND c = 3)
+			json:  "{\"a\":0, \"b\":2, \"c\":3}", 
+			match: true,
+		},
+		{
+			name:  "Explicit precedence with parentheses",
+			query: "(a = 1 OR b = 2) AND c = 3", 
+			json:  "{\"a\":0, \"b\":2, \"c\":3}", 
+			match: true,
+		},
+		{
+			name:  "Explicit precedence with parentheses - false case",
+			query: "(a = 1 OR b = 2) AND c = 3", 
+			json:  "{\"a\":0, \"b\":2, \"c\":4}", 
+			match: false,
+		},
+	}
+
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			
+			m, err := matcher.NewMatcher(tc.query)
+			require.NoError(err, "Failed to create matcher")
+
+			ctxMap := make(matcher.Context)
+			err = json.Unmarshal([]byte(tc.json), &ctxMap)
+			require.NoError(err, "Failed to unmarshal JSON")
+
+			// Test both regular and context-aware methods
+			ok, err := m.Test(&ctxMap)
+			assert.Equal(tc.match, ok)
+			assert.NoError(err)
+
+			// Test with context
+			okWithCtx, err := m.TestWithContext(ctx, &ctxMap)
+			assert.Equal(tc.match, okWithCtx)
+			assert.NoError(err)
+		})
+	}
+}
+
 func BenchmarkComplexMatcher(b *testing.B) {
 	b.ReportAllocs()
 	

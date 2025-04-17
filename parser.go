@@ -81,28 +81,54 @@ func (e *OrCondition) Eval(ctx Context) (bool, error) {
 	return true, nil
 }
 
-// Condition represents a single condition with a symbol and comparison
+// Condition represents either a simple condition or a nested expression in parentheses
 type Condition struct {
-	Symbol  string   `@Ident`
-	Compare *Compare `@@`
+	// Only one of these will be set
+	Nested    *Expression `  "(" @@ ")"`
+	Predicate *Predicate  `| @@`
 }
 
 // Eval evaluates the condition against the provided context
 func (x *Condition) Eval(ctx Context) (bool, error) {
-	if x == nil || x.Compare == nil {
+	if x == nil {
 		return false, errors.New("invalid condition")
 	}
 	
-	sym := x.Symbol
+	// If this is a nested expression in parentheses, evaluate it
+	if x.Nested != nil {
+		return x.Nested.Eval(ctx)
+	}
+	
+	// Otherwise evaluate the predicate
+	if x.Predicate == nil {
+		return false, errors.New("invalid predicate")
+	}
+	
+	return x.Predicate.Eval(ctx)
+}
+
+// Predicate represents a simple condition with a symbol and comparison
+type Predicate struct {
+	Symbol  string   `@Ident`
+	Compare *Compare `@@`
+}
+
+// Eval evaluates the predicate against the provided context
+func (p *Predicate) Eval(ctx Context) (bool, error) {
+	if p == nil || p.Compare == nil {
+		return false, errors.New("invalid predicate")
+	}
+	
+	sym := p.Symbol
 	ctxVal, ok := ctx[sym]
 	if !ok {
 		// Symbol not found in context, return false but not an error
 		return false, nil
 	}
 
-	switch o := x.Compare.Operator; o {
+	switch o := p.Compare.Operator; o {
 	case "=":
-		v := x.Compare.Value
+		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
@@ -134,7 +160,7 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
 	case "<>", "!=":
-		v := x.Compare.Value
+		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
@@ -167,7 +193,7 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 		}
 
 	case ">":
-		v := x.Compare.Value
+		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
@@ -190,7 +216,7 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 		}
 
 	case ">=":
-		v := x.Compare.Value
+		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
@@ -213,7 +239,7 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 		}
 
 	case "<":
-		v := x.Compare.Value
+		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
@@ -236,7 +262,7 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 		}
 
 	case "<=":
-		v := x.Compare.Value
+		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
@@ -286,6 +312,7 @@ func NewParser() *participle.Parser[Expression] {
 		{`Float`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`},
 		{`String`, `'[^']*'|"[^"]*"`},
 		{`Operators`, `<>|!=|<=|>=|[-+*/%,.()=<>]`},
+		{`Parentheses`, `[\(\)]`},
 		{"whitespace", `\s+`},
 	})
 	return participle.MustBuild[Expression](

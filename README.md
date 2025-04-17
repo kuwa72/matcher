@@ -93,6 +93,7 @@ For example: `a = 1 AND b = "foo" OR c > 5`
 
 * **Logical Operators**: `AND`, `OR` (case-insensitive)
 * **Comparison Operators**: `=`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
+* **Grouping**: Parentheses `()` for controlling evaluation order
 * **Value Types**:
   * **Numbers**: Integers and floating-point (automatically converted to float64)
   * **Strings**: Enclosed in single or double quotes
@@ -117,8 +118,15 @@ a = 1 AND b > 5 AND c = "string value"
 # Using OR for alternatives
 a = 1 OR b = 2
 
-# Complex expressions
-(a = 1 AND b > 5) OR (c = "foo" AND d != TRUE)
+# Using parentheses for grouping
+(a = 1 OR b = 2) AND c = 3
+
+# Nested parentheses
+(a = 1 AND (b > 5 OR (c = 3 AND d = 4)))
+
+# Changing precedence with parentheses
+a = 1 OR b = 2 AND c = 3  # Equivalent to: a = 1 OR (b = 2 AND c = 3)
+(a = 1 OR b = 2) AND c = 3  # Different precedence with parentheses
 ```
 
 For more examples, see the [test files](https://github.com/kuwa72/matcher/blob/main/parser_test.go).
