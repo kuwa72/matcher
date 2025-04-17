@@ -197,7 +197,52 @@ url = /https:\/\/[^\/]+\/[^\/]+/
 
 ## Performance
 
-The matcher is designed to be efficient for evaluating expressions against large data structures. Benchmarks are included in the test suite.
+The matcher is designed to be efficient for evaluating expressions against large data structures. Comprehensive benchmarks are included in the test suite.
+
+### Benchmark Results
+
+The following benchmarks were performed on a dataset of 10,000 records, each containing 20 fields. The tests were run on an AMD Ryzen 9 5900HS processor.
+
+#### Complex Query Performance
+
+```
+BenchmarkComplexQueryWithLargeDataset-16    5    215798360 ns/op    47335430 B/op    1095634 allocs/op
+```
+
+This benchmark evaluates a complex query with the following characteristics:
+- Regular expression patterns (e.g., `/^J.*/`, `/\/api\/v[0-9]\/.*/`)
+- Parentheses for grouping expressions
+- Multiple logical operators (AND, OR)
+- Various comparison operators
+- Query: `(name = /^J.*/ OR department = "Engineering") AND (age > 30 AND salary >= 70000) AND (status = "Active" OR status = "Pending") AND path = /\/api\/v[0-9]\/.*/ AND score > 50`
+
+The query matched approximately 0.5% of the 10,000 records (about 50-60 records).
+
+#### Filtering Performance
+
+```
+BenchmarkFilteringWithLargeDataset-16    1    1325055000 ns/op    282463792 B/op    6580071 allocs/op
+```
+
+This benchmark evaluates multiple filtering queries against the same dataset:
+- Simple numeric comparisons
+- Regular expression matching
+- Boolean field checks
+- Compound conditions with parentheses
+
+### Performance Considerations
+
+1. **Memory Usage**: The matcher allocates memory during evaluation, primarily for context handling and regex compilation.
+2. **Regex Compilation**: Regular expressions are compiled once when the matcher is created, not on each evaluation.
+3. **Security Limits**: The matcher includes built-in limits for regex pattern length and complexity to prevent DoS attacks.
+4. **Timeout Handling**: All regex operations have a built-in timeout to prevent catastrophic backtracking.
+
+### Optimization Tips
+
+1. **Prefer Simple Patterns**: When possible, use simple comparison operators instead of regex patterns.
+2. **Limit Regex Complexity**: Keep regex patterns as simple as possible to minimize compilation and matching time.
+3. **Order Conditions Efficiently**: Place conditions that are likely to fail first in AND expressions to take advantage of short-circuit evaluation.
+4. **Reuse Matchers**: Create matchers once and reuse them for multiple evaluations rather than recreating them for each test.
 
 ## Requirements
 
