@@ -1,69 +1,136 @@
-# matcher
+# Matcher
 
-Is simple query language for go struct data, included JSON query tool.
+A simple, efficient query language for Go struct data with JSON support. Matcher allows you to evaluate expressions against structured data with a SQL-like syntax.
 
-# usage
+## Usage
 
-## library
+### Library
 
-Constructor and test method, only for use.
-
-```
+```go
 package main
 
 import (
+	"context"
 	"fmt"
-	"os"
+	"log"
+	"time"
 
 	"github.com/kuwa72/matcher"
 )
 
 func main() {
-	query := "a=1"
-	m, err := matcher.NewMatcher(query) // constructor
+	// Create a matcher with a query expression
+	query := "a=1 AND b>5 OR c='foo'"
+	m, err := matcher.NewMatcher(query)
 	if err != nil {
-		os.Exit(1)
+		log.Fatalf("Failed to create matcher: %v", err)
 	}
+
+	// Enable debug mode to see the parsed expression
 	m.Debug = true
 
-	ctx := matcher.Context{"a": 1}
-
-	ret, err := m.Test(&ctx) // check match data and query
-	if err != nil {
-		os.Exit(1)
+	// Create a context with data to match against
+	ctx := matcher.Context{
+		"a": 1,
+		"b": 10,
+		"c": "foo",
 	}
-	fmt.Printf("matched?: %v", ret)
+
+	// Basic matching
+	matched, err := m.Test(&ctx)
+	if err != nil {
+		log.Fatalf("Error during matching: %v", err)
+	}
+	fmt.Printf("Basic match result: %v\n", matched)
+
+	// With timeout context
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Context-aware matching with timeout
+	matched, err = m.TestWithContext(timeoutCtx, &ctx)
+	if err != nil {
+		log.Fatalf("Error during matching with context: %v", err)
+	}
+	fmt.Printf("Context-aware match result: %v\n", matched)
 }
 ```
 
-## cli
+### CLI Tool
 
-Install
+#### Installation
 
-```
-go install github.com/kuwa72/matcher/matcher-cli
-```
-
-If input JSON(from stdin) and query(command argument) matched, return 0, otherwise 1.
-
-example.
-
-```
-$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli 'b = 2 and a = 1 and a >= -1 and c = "hoge"'
+```bash
+go install github.com/kuwa72/matcher/matcher-cli@latest
 ```
 
-# query
+#### Usage
 
-Dead simple.
+The CLI tool reads JSON data from stdin and evaluates it against the query provided as a command-line argument. It returns exit code 0 if matched, 1 otherwise.
 
-`Identify Condition Value (Operator Identify Condition Value...)` like `a = 1 and b = "foo"`
+```bash
+# Basic usage
+$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli 'b = 2 and a = 1 and c = "hoge"'
 
-* Operators: `AND, OR`
-* Conditions: `=, !=(<>), >, >=, <, <=`
-* Supported value type: Numbers(convert to float), String
+# With debug output
+$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli --debug 'b = 2 and a = 1 and c = "hoge"'
 
-Examples see test file: http://github.com/kuwa72/matcher/parser_test.go.
+# With custom timeout (in seconds)
+$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli --timeout 10 'b = 2 and a = 1 and c = "hoge"'
+```
 
-# license
+## Query Language
+
+The query language is simple and intuitive, resembling SQL WHERE clauses.
+
+### Syntax
+
+`Identifier Condition Value (Operator Identifier Condition Value...)` 
+
+For example: `a = 1 AND b = "foo" OR c > 5`
+
+### Features
+
+* **Logical Operators**: `AND`, `OR` (case-insensitive)
+* **Comparison Operators**: `=`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
+* **Value Types**:
+  * **Numbers**: Integers and floating-point (automatically converted to float64)
+  * **Strings**: Enclosed in single or double quotes
+  * **Booleans**: `TRUE` or `FALSE` (case-insensitive)
+  * **NULL**: Special value for null checks
+
+### Operator Precedence
+
+1. Comparisons (`=`, `!=`, etc.) are evaluated first
+2. `AND` conditions are evaluated next
+3. `OR` conditions are evaluated last
+
+### Examples
+
+```
+# Simple equality
+a = 1
+
+# Multiple conditions with AND
+a = 1 AND b > 5 AND c = "string value"
+
+# Using OR for alternatives
+a = 1 OR b = 2
+
+# Complex expressions
+(a = 1 AND b > 5) OR (c = "foo" AND d != TRUE)
+```
+
+For more examples, see the [test files](https://github.com/kuwa72/matcher/blob/main/parser_test.go).
+
+## Performance
+
+The matcher is designed to be efficient for evaluating expressions against large data structures. Benchmarks are included in the test suite.
+
+## Requirements
+
+- Go 1.22 or higher
+
+## License
 
 MIT License

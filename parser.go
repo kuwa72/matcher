@@ -1,6 +1,7 @@
 package matcher
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -8,54 +9,94 @@ import (
 	"github.com/alecthomas/participle/v2/lexer"
 )
 
+// Boolean is a custom boolean type for parsing boolean values from query strings
 type Boolean bool
 
+// Context is a map of string keys to arbitrary values that can be evaluated against expressions
 type Context map[string]interface{}
 
+// ErrInvalidContext is returned when an invalid context is provided
+var ErrInvalidContext = errors.New("invalid context")
+
+// ErrInvalidValue is returned when a value cannot be properly compared
+var ErrInvalidValue = errors.New("invalid value")
+
+// ErrInvalidOperator is returned when an unknown operator is encountered
+var ErrInvalidOperator = errors.New("invalid operator")
+
+// Capture implements the participle.Capture interface for Boolean
 func (b *Boolean) Capture(values []string) error {
+	if len(values) == 0 {
+		return errors.New("no values to capture")
+	}
 	*b = values[0] == "TRUE"
 	return nil
 }
 
+// Expression represents a parsed query expression with OR conditions
 type Expression struct {
 	Or []*OrCondition `@@ ( "OR" @@ )*`
 }
 
+// Eval evaluates the expression against the provided context
+// Returns true if any of the OR conditions evaluate to true
 func (e *Expression) Eval(ctx Context) (bool, error) {
+	if e == nil || len(e.Or) == 0 {
+		return false, nil
+	}
+	
 	for _, x := range e.Or {
-		if b, err := x.Eval(ctx); err != nil {
-			return false, err
-		} else if b {
+		result, err := x.Eval(ctx)
+		if err != nil {
+			return false, fmt.Errorf("evaluating OR condition: %w", err)
+		}
+		if result {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
+// OrCondition represents a set of AND conditions within an expression
 type OrCondition struct {
 	And []*Condition `@@ ( "AND" @@ )*`
 }
 
+// Eval evaluates the AND conditions against the provided context
+// Returns true only if all AND conditions evaluate to true
 func (e *OrCondition) Eval(ctx Context) (bool, error) {
+	if e == nil || len(e.And) == 0 {
+		return false, nil
+	}
+	
 	for _, x := range e.And {
-		if b, err := x.Eval(ctx); err != nil {
-			return false, err
-		} else if !b {
+		result, err := x.Eval(ctx)
+		if err != nil {
+			return false, fmt.Errorf("evaluating AND condition: %w", err)
+		}
+		if !result {
 			return false, nil
 		}
 	}
 	return true, nil
 }
 
+// Condition represents a single condition with a symbol and comparison
 type Condition struct {
 	Symbol  string   `@Ident`
 	Compare *Compare `@@`
 }
 
+// Eval evaluates the condition against the provided context
 func (x *Condition) Eval(ctx Context) (bool, error) {
+	if x == nil || x.Compare == nil {
+		return false, errors.New("invalid condition")
+	}
+	
 	sym := x.Symbol
 	ctxVal, ok := ctx[sym]
 	if !ok {
+		// Symbol not found in context, return false but not an error
 		return false, nil
 	}
 
@@ -220,14 +261,16 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 	default:
 		return false, fmt.Errorf("unknown operator: %s", o)
 	}
-	return false, fmt.Errorf("failed to complation, type: %T: %#v", ctxVal, ctxVal)
+	return false, fmt.Errorf("failed to complete comparison, type: %T: %#v", ctxVal, ctxVal)
 }
 
+// Compare represents a comparison operation with an operator and value
 type Compare struct {
 	Operator string `@( "<>" | "<=" | ">=" | "=" | "<" | ">" | "!=" )`
 	Value    *Value `@@`
 }
 
+// Value represents a value that can be compared in a condition
 type Value struct {
 	Float   *float64 `( @Float `
 	String  *string  ` | @String`
@@ -235,22 +278,20 @@ type Value struct {
 	Null    bool     ` | @"NULL" )`
 }
 
-func NewParser() *participle.Parser {
+// NewParser creates a new participle parser for parsing query expressions
+func NewParser() *participle.Parser[Expression] {
 	qLexer := lexer.MustSimple([]lexer.SimpleRule{
-		{`Keyword`, `(?i)TRUE|FALSE|AND|OR`},
+		{`Keyword`, `(?i)TRUE|FALSE|AND|OR|NULL`},
 		{`Ident`, `[a-zA-Z_][a-zA-Z0-9_]*`},
 		{`Float`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`},
 		{`String`, `'[^']*'|"[^"]*"`},
 		{`Operators`, `<>|!=|<=|>=|[-+*/%,.()=<>]`},
 		{"whitespace", `\s+`},
 	})
-	return participle.MustBuild(
-		&Expression{},
+	return participle.MustBuild[Expression](
 		participle.Lexer(qLexer),
 		participle.Unquote("String"),
 		participle.CaseInsensitive("Keyword"),
-		// participle.Elide("Comment"),
-		// Need to solve left recursion detection first, if possible.
-		// participle.UseLookahead(),
+		participle.UseLookahead(20),
 	)
 }

@@ -1,0 +1,44 @@
+{
+  "index": 0,
+  "guid": "b2f1d29e-4c3f-4f39-9f1c-7d18c7fcf722",
+  "isActive": true,
+  "balance": "$1,713.88",
+  "picture": "http://placehold.it/32x32",
+  "age": 40,
+  "eyeColor": "blue",
+  "name": "Tanya Mcintyre",
+  "gender": "female",
+  "company": "ZILLACON",
+  "email": "tanyamcintyre@zillacon.com",
+  "phone": "+1 (855) 452-3346",
+  "address": "233 Haring Street, Allentown, Northern Mariana Islands, 8148",
+  "about": "Amet ipsum ut amet enim fugiat labore do enim non. Commodo laboris veniam nostrud dolor ex labore culpa quis. Laborum sunt in magna veniam consequat. Laborum quis deserunt mollit qui dolor magna excepteur excepteur.\r\n",
+  "registered": "2017-11-02T08:10:12 -09:00",
+  "latitude": -63.183265,
+  "longitude": 22.563392,
+  "tags": [
+    "dolor",
+    "elit",
+    "esse",
+    "do",
+    "aliqua",
+    "magna",
+    "reprehenderit"
+  ],
+  "friends": [
+    {
+      "id": 0,
+      "name": "Tanya Mcintyre"
+    },
+    {
+      "id": 1,
+      "name": "John Doe"
+    },
+    {
+      "id": 2,
+      "name": "Jane Smith"
+    }
+  ],
+  "greeting": "Hello, Tanya Mcintyre! You have 5 unread messages.",
+  "favoriteFruit": "apple"
+}
