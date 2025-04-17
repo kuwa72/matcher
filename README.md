@@ -1,103 +1,90 @@
 # Matcher
 
-A simple, efficient query language for Go struct data with JSON support. Matcher allows you to evaluate expressions against structured data with a SQL-like syntax.
+[![Go Version](https://img.shields.io/badge/Go-1.22%2B-blue.svg)](https://golang.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## Usage
+> **Powerful, flexible, and secure query language for filtering Go data structures**
 
-### Library
+Matcher is a high-performance Go library that lets you filter data structures using a simple yet powerful query language. It supports complex expressions with regex patterns, logical operators, and parentheses grouping - perfect for filtering JSON data, in-memory collections, or implementing query capabilities in your APIs.
+
+*[日本語版はこちら](README-ja.md)*
+
+## ✨ Highlights
+
+- **Intuitive Query Language** - SQL-like syntax that's easy to learn and use
+- **Powerful Regex Support** - Match string patterns with full regex capabilities
+- **Parentheses Grouping** - Build complex nested expressions with precise control
+- **High Performance** - Optimized for speed with minimal allocations
+- **Security Built-in** - Protection against ReDoS attacks and resource exhaustion
+- **Context Support** - Cancel long-running operations with timeouts
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+go get github.com/kuwa72/matcher
+```
+
+### Basic Example
 
 ```go
 package main
 
 import (
-	"context"
 	"fmt"
-	"log"
-	"time"
-
 	"github.com/kuwa72/matcher"
 )
 
 func main() {
-	// Create a matcher with a query expression
-	query := "a=1 AND b>5 OR c='foo'"
-	m, err := matcher.NewMatcher(query)
+	// Create a matcher with a query string
+	m, err := matcher.NewMatcher(`name = "John" AND age > 30`)
 	if err != nil {
-		log.Fatalf("Failed to create matcher: %v", err)
+		panic(err)
 	}
 
-	// Enable debug mode to see the parsed expression
-	m.Debug = true
-
-	// Create a context with data to match against
-	ctx := matcher.Context{
-		"a": 1,
-		"b": 10,
-		"c": "foo",
+	// Data to test against
+	data := matcher.Context{
+		"name": "John",
+		"age":  35,
 	}
 
-	// Basic matching
-	matched, err := m.Test(&ctx)
+	// Test if the data matches the query
+	result, err := m.Test(&data)
 	if err != nil {
-		log.Fatalf("Error during matching: %v", err)
+		panic(err)
 	}
-	fmt.Printf("Basic match result: %v\n", matched)
 
-	// With timeout context
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Context-aware matching with timeout
-	matched, err = m.TestWithContext(timeoutCtx, &ctx)
-	if err != nil {
-		log.Fatalf("Error during matching with context: %v", err)
-	}
-	fmt.Printf("Context-aware match result: %v\n", matched)
+	fmt.Printf("Match: %v\n", result) // Output: Match: true
 }
 ```
 
 ### CLI Tool
 
-#### Installation
-
 ```bash
+# Installation
 go install github.com/kuwa72/matcher/matcher-cli@latest
-```
 
-#### Usage
-
-The CLI tool reads JSON data from stdin and evaluates it against the query provided as a command-line argument. It returns exit code 0 if matched, 1 otherwise.
-
-```bash
 # Basic usage
-$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli 'b = 2 and a = 1 and c = "hoge"'
+echo '{"name":"John","age":35}' | matcher-cli 'name = "John" AND age > 30'
 
-# With debug output
-$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli --debug 'b = 2 and a = 1 and c = "hoge"'
-
-# With custom timeout (in seconds)
-$ echo '{"a":1,"b":2,"c":"hoge"}' | matcher-cli --timeout 10 'b = 2 and a = 1 and c = "hoge"'
+# Debug output
+echo '{"name":"John","age":35}' | matcher-cli --debug 'name = "John" AND age > 30'
 ```
 
-## Query Language
+## 🔍 Query Language
 
-The query language is simple and intuitive, resembling SQL WHERE clauses.
+Matcher uses an intuitive query language that's easy to learn yet powerful enough for complex filtering needs.
 
-### Syntax
-
-`Identifier Condition Value (Operator Identifier Condition Value...)` 
-
-For example: `a = 1 AND b = "foo" OR c > 5`
-
-### Features
+### Key Features
 
 * **Logical Operators**: `AND`, `OR` (case-insensitive)
 * **Comparison Operators**: `=`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
-* **Grouping**: Parentheses `()` for controlling evaluation order
+* **Grouping**: Parentheses `()` for precise control over evaluation order
 * **Value Types**:
-  * **Numbers**: Integers and floating-point (automatically converted to float64)
+  * **Numbers**: Integers and floating-point values
   * **Strings**: Enclosed in single or double quotes
-  * **Regular Expressions**: Patterns enclosed in forward slashes `/pattern/`
+  * **Regular Expressions**: Patterns enclosed in `/pattern/`
   * **Booleans**: `TRUE` or `FALSE` (case-insensitive)
   * **NULL**: Special value for null checks
 
@@ -107,147 +94,160 @@ For example: `a = 1 AND b = "foo" OR c > 5`
 2. `AND` conditions are evaluated next
 3. `OR` conditions are evaluated last
 
-### Examples
+### 📝 Example Queries
 
 ```
 # Simple equality
-a = 1
+age = 30
 
 # Multiple conditions with AND
-a = 1 AND b > 5 AND c = "string value"
+name = "John" AND age > 30 AND status = "active"
 
 # Using OR for alternatives
-a = 1 OR b = 2
+country = "USA" OR country = "Canada"
 
-# Using parentheses for grouping
-(a = 1 OR b = 2) AND c = 3
+# Parentheses for grouping
+(status = "pending" OR status = "approved") AND created_at > "2025-01-01"
 
-# Nested parentheses
-(a = 1 AND (b > 5 OR (c = 3 AND d = 4)))
-
-# Changing precedence with parentheses
-a = 1 OR b = 2 AND c = 3  # Equivalent to: a = 1 OR (b = 2 AND c = 3)
-(a = 1 OR b = 2) AND c = 3  # Different precedence with parentheses
+# Complex nested expressions
+(category = "electronics" AND (price < 1000 OR rating > 4.5)) OR featured = TRUE
 
 # Regular expression matching
-name = /John.*/  # Matches any string starting with "John"
-email = /.*@example\.com$/  # Matches strings ending with "@example.com"
+email = /.*@gmail\.com$/    # Match Gmail addresses
+name = /^(John|Jane).*/     # Names starting with John or Jane
 
-# Regular expression with negation
-name != /Temp.*/  # Matches any string NOT starting with "Temp"
+# Regex with forward slashes
+path = /\/api\/v1\/.*/      # Match API v1 paths
+url = /https:\/\/.*/       # Match HTTPS URLs
 
-# Combining regex with other conditions
-(name = /John.*/ OR name = /Jane.*/) AND age > 30
+# Combining everything
+(name = /J.*/ OR department = "Engineering") AND 
+(age > 30 AND salary >= 70000) AND 
+(status = "Active" OR status = "Pending")
 ```
 
-For more examples, see the [test files](https://github.com/kuwa72/matcher/blob/main/parser_test.go).
+See the [test files](https://github.com/kuwa72/matcher/blob/main/parser_test.go) for more examples.
 
-## Regular Expression Support
+## 🔒 Regular Expression Support
 
-The matcher supports regular expression pattern matching for string values. Regular expressions must be enclosed in forward slashes (`/pattern/`).
+Matcher provides powerful regex pattern matching for string values, with built-in security protections.
 
-### Security Features
+### 🛡️ Security Features
 
-The matcher implements several security features to prevent potential denial-of-service attacks through malicious regex patterns:
+All regex operations include protection against ReDoS attacks and resource exhaustion:
 
-1. **Pattern Length Limit**: Regex patterns are limited to 1000 characters
-2. **Complexity Limit**: Patterns with more than 20 repetition operators (`*`, `+`, `{...}`, `?`, `|`) are rejected
-3. **Compilation Timeout**: Regex compilation is limited to 100ms to prevent catastrophic backtracking
-4. **Asynchronous Processing**: Regex compilation runs in a separate goroutine to avoid blocking the main thread
+- **Pattern Length Limit**: Maximum 1000 characters per pattern
+- **Complexity Limit**: No more than 20 repetition operators (`*`, `+`, `{...}`, `?`, `|`)
+- **Compilation Timeout**: 100ms timeout prevents catastrophic backtracking
+- **Asynchronous Processing**: Non-blocking compilation in separate goroutines
 
-### Syntax
-
-```
-field = /pattern/   # Matches if the field value matches the regex pattern
-field != /pattern/  # Matches if the field value does NOT match the regex pattern
-```
-
-### Notes
-
-- Regular expressions use Go's standard `regexp` package syntax
-- Regex patterns can only be used with the equality (`=`) and inequality (`!=`, `<>`) operators
-- Regex patterns can only be applied to string values
-- Regex patterns can be combined with other conditions using logical operators and parentheses
-- To include forward slashes in regex patterns, escape them with a backslash (`\/`)
-
-### Examples
+### 📋 Syntax
 
 ```
-# Match email address format
+field = /pattern/   # Match if field matches the pattern
+field != /pattern/  # Match if field does NOT match the pattern
+```
+
+### 📌 Important Notes
+
+- Uses Go's standard `regexp` package syntax
+- Works with equality (`=`) and inequality (`!=`, `<>`) operators
+- Applies only to string values
+- Escape forward slashes with backslash (`\/`)
+
+### 🌟 Regex Examples
+
+```go
+// Email validation
 email = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
 
-# Match specific pattern at start of string
-name = /^John/
+// URL path matching
+path = /\/api\/v[0-9]\/users/
 
-# Match specific pattern at end of string
-filename = /\.jpg$/
+// File extensions
+filename = /\.(jpg|png|gif)$/
 
-# Match any occurrence of a pattern
-description = /contains this phrase/
+// Phone numbers
+phone = /^\+?[0-9]{10,15}$/
 
-# Match URL paths with forward slashes
-path = /\/api\/v1\/users/
-
-# Match file paths
-filepath = /\/home\/[a-z]+\/.*\.txt/
-
-# Match URLs
+// Complex patterns with escaping
 url = /https:\/\/[^\/]+\/[^\/]+/
 ```
 
-## Performance
+## ⚡ Performance
 
-The matcher is designed to be efficient for evaluating expressions against large data structures. Comprehensive benchmarks are included in the test suite.
+Matcher is designed for high performance even with large datasets and complex queries.
 
-### Benchmark Results
+### 📊 Benchmark Results
 
-The following benchmarks were performed on a dataset of 10,000 records, each containing 20 fields. The tests were run on an AMD Ryzen 9 5900HS processor.
+Tested on 10,000 records (each with 20 fields) on an AMD Ryzen 9 5900HS:
 
 #### Complex Query Performance
 
 ```
-BenchmarkComplexQueryWithLargeDataset-16    5    215798360 ns/op    47335430 B/op    1095634 allocs/op
+BenchmarkComplexQueryWithLargeDataset-16    5    215ms/op    47MB/op    1,095,634 allocs/op
 ```
 
-This benchmark evaluates a complex query with the following characteristics:
-- Regular expression patterns (e.g., `/^J.*/`, `/\/api\/v[0-9]\/.*/`)
-- Parentheses for grouping expressions
-- Multiple logical operators (AND, OR)
-- Various comparison operators
-- Query: `(name = /^J.*/ OR department = "Engineering") AND (age > 30 AND salary >= 70000) AND (status = "Active" OR status = "Pending") AND path = /\/api\/v[0-9]\/.*/ AND score > 50`
-
-The query matched approximately 0.5% of the 10,000 records (about 50-60 records).
-
-#### Filtering Performance
-
+**Query tested:**
 ```
-BenchmarkFilteringWithLargeDataset-16    1    1325055000 ns/op    282463792 B/op    6580071 allocs/op
+(name = /^J.*/ OR department = "Engineering") AND 
+(age > 30 AND salary >= 70000) AND 
+(status = "Active" OR status = "Pending") AND 
+path = /\/api\/v[0-9]\/.*/ AND score > 50
 ```
 
-This benchmark evaluates multiple filtering queries against the same dataset:
-- Simple numeric comparisons
-- Regular expression matching
-- Boolean field checks
-- Compound conditions with parentheses
+#### Multiple Filters Performance
 
-### Performance Considerations
+```
+BenchmarkFilteringWithLargeDataset-16    1    1,325ms/op    282MB/op    6,580,071 allocs/op
+```
 
-1. **Memory Usage**: The matcher allocates memory during evaluation, primarily for context handling and regex compilation.
-2. **Regex Compilation**: Regular expressions are compiled once when the matcher is created, not on each evaluation.
-3. **Security Limits**: The matcher includes built-in limits for regex pattern length and complexity to prevent DoS attacks.
-4. **Timeout Handling**: All regex operations have a built-in timeout to prevent catastrophic backtracking.
+### 🔧 Optimization Tips
 
-### Optimization Tips
+1. **Reuse Matchers** - Create once, reuse many times
+2. **Prefer Simple Comparisons** - Use `=`, `>`, `<` instead of regex when possible
+3. **Optimize Query Order** - Put likely-to-fail conditions first in AND expressions
+4. **Limit Regex Complexity** - Simpler patterns perform better
 
-1. **Prefer Simple Patterns**: When possible, use simple comparison operators instead of regex patterns.
-2. **Limit Regex Complexity**: Keep regex patterns as simple as possible to minimize compilation and matching time.
-3. **Order Conditions Efficiently**: Place conditions that are likely to fail first in AND expressions to take advantage of short-circuit evaluation.
-4. **Reuse Matchers**: Create matchers once and reuse them for multiple evaluations rather than recreating them for each test.
+## 🔧 Advanced Usage
 
-## Requirements
+### Context Support
+
+Matcher supports Go's context package for timeout and cancellation:
+
+```go
+// Create a context with timeout
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+// Test with context
+result, err := matcher.TestWithContext(ctx, &data)
+```
+
+### JSON Integration
+
+Matcher works seamlessly with JSON data:
+
+```go
+// Parse JSON data
+var data matcher.Context
+json.Unmarshal([]byte(`{"name":"John","age":35}`), &data)
+
+// Create matcher
+matcher, _ := matcher.NewMatcher(`name = "John" AND age > 30`)
+
+// Test against JSON data
+result, _ := matcher.Test(&data)
+```
+
+## 📦 Requirements
 
 - Go 1.22 or higher
 
-## License
+## 📄 License
 
-MIT License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 👥 Contributing
+
+Contributions are welcome! Feel free to open issues or submit pull requests.
