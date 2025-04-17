@@ -97,6 +97,7 @@ For example: `a = 1 AND b = "foo" OR c > 5`
 * **Value Types**:
   * **Numbers**: Integers and floating-point (automatically converted to float64)
   * **Strings**: Enclosed in single or double quotes
+  * **Regular Expressions**: Patterns enclosed in forward slashes `/pattern/`
   * **Booleans**: `TRUE` or `FALSE` (case-insensitive)
   * **NULL**: Special value for null checks
 
@@ -127,9 +128,72 @@ a = 1 OR b = 2
 # Changing precedence with parentheses
 a = 1 OR b = 2 AND c = 3  # Equivalent to: a = 1 OR (b = 2 AND c = 3)
 (a = 1 OR b = 2) AND c = 3  # Different precedence with parentheses
+
+# Regular expression matching
+name = /John.*/  # Matches any string starting with "John"
+email = /.*@example\.com$/  # Matches strings ending with "@example.com"
+
+# Regular expression with negation
+name != /Temp.*/  # Matches any string NOT starting with "Temp"
+
+# Combining regex with other conditions
+(name = /John.*/ OR name = /Jane.*/) AND age > 30
 ```
 
 For more examples, see the [test files](https://github.com/kuwa72/matcher/blob/main/parser_test.go).
+
+## Regular Expression Support
+
+The matcher supports regular expression pattern matching for string values. Regular expressions must be enclosed in forward slashes (`/pattern/`).
+
+### Security Features
+
+The matcher implements several security features to prevent potential denial-of-service attacks through malicious regex patterns:
+
+1. **Pattern Length Limit**: Regex patterns are limited to 1000 characters
+2. **Complexity Limit**: Patterns with more than 20 repetition operators (`*`, `+`, `{...}`, `?`, `|`) are rejected
+3. **Compilation Timeout**: Regex compilation is limited to 100ms to prevent catastrophic backtracking
+4. **Asynchronous Processing**: Regex compilation runs in a separate goroutine to avoid blocking the main thread
+
+### Syntax
+
+```
+field = /pattern/   # Matches if the field value matches the regex pattern
+field != /pattern/  # Matches if the field value does NOT match the regex pattern
+```
+
+### Notes
+
+- Regular expressions use Go's standard `regexp` package syntax
+- Regex patterns can only be used with the equality (`=`) and inequality (`!=`, `<>`) operators
+- Regex patterns can only be applied to string values
+- Regex patterns can be combined with other conditions using logical operators and parentheses
+- To include forward slashes in regex patterns, escape them with a backslash (`\/`)
+
+### Examples
+
+```
+# Match email address format
+email = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
+
+# Match specific pattern at start of string
+name = /^John/
+
+# Match specific pattern at end of string
+filename = /\.jpg$/
+
+# Match any occurrence of a pattern
+description = /contains this phrase/
+
+# Match URL paths with forward slashes
+path = /\/api\/v1\/users/
+
+# Match file paths
+filepath = /\/home\/[a-z]+\/.*\.txt/
+
+# Match URLs
+url = /https:\/\/[^\/]+\/[^\/]+/
+```
 
 ## Performance
 

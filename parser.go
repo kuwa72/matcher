@@ -1,9 +1,13 @@
 package matcher
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/alecthomas/participle/v2"
 	"github.com/alecthomas/participle/v2/lexer"
@@ -35,7 +39,7 @@ func (b *Boolean) Capture(values []string) error {
 
 // Expression represents a parsed query expression with OR conditions
 type Expression struct {
-	Or []*OrCondition `@@ ( "OR" @@ )*`
+	Or []*OrCondition `parser:"@@ ( \"OR\" @@ )*"`
 }
 
 // Eval evaluates the expression against the provided context
@@ -59,7 +63,7 @@ func (e *Expression) Eval(ctx Context) (bool, error) {
 
 // OrCondition represents a set of AND conditions within an expression
 type OrCondition struct {
-	And []*Condition `@@ ( "AND" @@ )*`
+	And []*Condition `parser:"@@ ( \"AND\" @@ )*"`
 }
 
 // Eval evaluates the AND conditions against the provided context
@@ -84,8 +88,8 @@ func (e *OrCondition) Eval(ctx Context) (bool, error) {
 // Condition represents either a simple condition or a nested expression in parentheses
 type Condition struct {
 	// Only one of these will be set
-	Nested    *Expression `  "(" @@ ")"`
-	Predicate *Predicate  `| @@`
+	Nested    *Expression `parser:"  \"(\" @@ \")\""`
+	Predicate *Predicate  `parser:"| @@"`
 }
 
 // Eval evaluates the condition against the provided context
@@ -109,8 +113,8 @@ func (x *Condition) Eval(ctx Context) (bool, error) {
 
 // Predicate represents a simple condition with a symbol and comparison
 type Predicate struct {
-	Symbol  string   `@Ident`
-	Compare *Compare `@@`
+	Symbol  string   `parser:"@Ident"`
+	Compare *Compare `parser:"@@"`
 }
 
 // Eval evaluates the predicate against the provided context
@@ -143,6 +147,12 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			}
 		case v.String != nil:
 			return ctxVal == *v.String, nil
+		case v.Regex != nil:
+			strVal, ok := ctxVal.(string)
+			if !ok {
+				return false, fmt.Errorf("cannot apply regex to non-string value: %T", ctxVal)
+			}
+			return v.Regex.Regexp.MatchString(strVal), nil
 		case v.Boolean != nil:
 			switch x := ctxVal.(type) {
 			case int:
@@ -175,6 +185,12 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			}
 		case v.String != nil:
 			return ctxVal != *v.String, nil
+		case v.Regex != nil:
+			strVal, ok := ctxVal.(string)
+			if !ok {
+				return false, fmt.Errorf("cannot apply regex to non-string value: %T", ctxVal)
+			}
+			return !v.Regex.Regexp.MatchString(strVal), nil
 		case v.Boolean != nil:
 			switch x := ctxVal.(type) {
 			case int:
@@ -209,6 +225,8 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			}
 		case v.String != nil:
 			return ctxVal.(string) > *v.String, nil
+		case v.Regex != nil:
+			return false, fmt.Errorf("cannot use > operator with regex pattern")
 		case v.Boolean != nil:
 			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
 		default:
@@ -232,6 +250,8 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			}
 		case v.String != nil:
 			return ctxVal.(string) >= *v.String, nil
+		case v.Regex != nil:
+			return false, fmt.Errorf("cannot use >= operator with regex pattern")
 		case v.Boolean != nil:
 			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
 		default:
@@ -255,6 +275,8 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			}
 		case v.String != nil:
 			return ctxVal.(string) < *v.String, nil
+		case v.Regex != nil:
+			return false, fmt.Errorf("cannot use < operator with regex pattern")
 		case v.Boolean != nil:
 			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
 		default:
@@ -278,6 +300,8 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			}
 		case v.String != nil:
 			return ctxVal.(string) <= *v.String, nil
+		case v.Regex != nil:
+			return false, fmt.Errorf("cannot use <= operator with regex pattern")
 		case v.Boolean != nil:
 			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
 		default:
@@ -292,28 +316,111 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 
 // Compare represents a comparison operation with an operator and value
 type Compare struct {
-	Operator string `@( "<>" | "<=" | ">=" | "=" | "<" | ">" | "!=" )`
-	Value    *Value `@@`
+	Operator string `parser:"@( \"<>\" | \"<=\" | \">=\" | \"=\" | \"<\" | \">\" | \"!=\" )"`
+	Value    *Value `parser:"@@"`
 }
 
 // Value represents a value that can be compared in a condition
 type Value struct {
-	Float   *float64 `( @Float `
-	String  *string  ` | @String`
-	Boolean *bool    ` | @("TRUE" | "FALSE")`
-	Null    bool     ` | @"NULL" )`
+	Float   *float64  `parser:"( @Float "`
+	String  *string   `parser:" | @String"`
+	Regex   *RegexVal `parser:" | @Regex"`
+	Boolean *bool     `parser:" | @(\"TRUE\" | \"FALSE\")"`
+	Null    bool      `parser:" | @\"NULL\" )"`
+}
+
+// セキュリティのための定数
+const (
+	// MaxRegexPatternLength は正規表現パターンの最大長
+	MaxRegexPatternLength = 1000
+	// MaxRegexComplexity は正規表現の複雑さの最大値（繰り返し演算子の数）
+	MaxRegexComplexity = 20
+)
+
+// RegexVal represents a regular expression pattern
+type RegexVal struct {
+	Pattern string
+	Regexp  *regexp.Regexp
+}
+
+// Capture implements the participle.Capture interface for RegexVal
+func (r *RegexVal) Capture(values []string) error {
+	if len(values) == 0 {
+		return errors.New("no regex pattern to capture")
+	}
+	
+	// Remove the leading '/' and trailing '/' from the regex pattern
+	pattern := values[0]
+	if len(pattern) < 3 { // Need at least /x/
+		return fmt.Errorf("invalid regex pattern: %s", pattern)
+	}
+	
+	// Extract the pattern between slashes
+	pattern = pattern[1 : len(pattern)-1]
+	
+	// エスケープされたスラッシュを処理
+	// Go の文字列リテラル内では \\ は \ に変換され、\\/は \/ になる
+	// 正規表現内では \/ はエスケープされたスラッシュを意味する
+	pattern = strings.ReplaceAll(pattern, "\\/", "/")
+	
+	// セキュリティチェック: パターンの長さ制限
+	if len(pattern) > MaxRegexPatternLength {
+		return fmt.Errorf("regex pattern too long: %d characters (max %d)", len(pattern), MaxRegexPatternLength)
+	}
+	
+	// セキュリティチェック: 複雑さの制限（繰り返し演算子の数をカウント）
+	complexity := strings.Count(pattern, "*") + strings.Count(pattern, "+") + 
+		strings.Count(pattern, "{") + strings.Count(pattern, "?") + 
+		strings.Count(pattern, "|")
+	if complexity > MaxRegexComplexity {
+		return fmt.Errorf("regex pattern too complex: %d complexity score (max %d)", complexity, MaxRegexComplexity)
+	}
+	
+	r.Pattern = pattern
+	
+	// Compile the regex pattern with timeout protection via context
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	
+	// 非同期でコンパイルを実行
+	ch := make(chan struct {
+		re  *regexp.Regexp
+		err error
+	})
+	go func() {
+		// パターンをコンパイルする前にデバッグ出力
+		fmt.Printf("Compiling regex pattern: %q\n", pattern)
+		re, err := regexp.Compile(pattern)
+		ch <- struct {
+			re  *regexp.Regexp
+			err error
+		}{re, err}
+	}()
+	
+	// タイムアウトまたは完了を待つ
+	select {
+	case result := <-ch:
+		if result.err != nil {
+			return fmt.Errorf("invalid regex pattern: %w", result.err)
+		}
+		r.Regexp = result.re
+	case <-ctx.Done():
+		return fmt.Errorf("regex compilation timed out: pattern may cause catastrophic backtracking")
+	}
+	
+	return nil
 }
 
 // NewParser creates a new participle parser for parsing query expressions
 func NewParser() *participle.Parser[Expression] {
 	qLexer := lexer.MustSimple([]lexer.SimpleRule{
-		{`Keyword`, `(?i)TRUE|FALSE|AND|OR|NULL`},
-		{`Ident`, `[a-zA-Z_][a-zA-Z0-9_]*`},
-		{`Float`, `[-+]?\d*\.?\d+([eE][-+]?\d+)?`},
-		{`String`, `'[^']*'|"[^"]*"`},
-		{`Operators`, `<>|!=|<=|>=|[-+*/%,.()=<>]`},
-		{`Parentheses`, `[\(\)]`},
-		{"whitespace", `\s+`},
+		{Name: "Keyword", Pattern: `(?i)TRUE|FALSE|AND|OR|NULL`},
+		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_]*`},
+		{Name: "Float", Pattern: `[-+]?\d*\.?\d+([eE][-+]?\d+)?`},
+		{Name: "String", Pattern: `'[^']*'|"[^"]*"`},
+		{Name: "Regex", Pattern: `/[^/\\]*(\\.[^/\\]*)*/`}, // Regex pattern between slashes, allowing escaped characters
+		{Name: "Operators", Pattern: `<>|!=|<=|>=|[-+*/%,.()=<>]`},
+		{Name: "whitespace", Pattern: `\s+`},
 	})
 	return participle.MustBuild[Expression](
 		participle.Lexer(qLexer),

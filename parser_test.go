@@ -217,6 +217,136 @@ func TestParenthesesGrouping(t *testing.T) {
 	}
 }
 
+func TestRegexMatching(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		json  string
+		match bool
+	}{
+		{
+			name:  "Simple regex match",
+			query: "name = /Tan.*/", 
+			json:  "{\"name\":\"Tanya\"}", 
+			match: true,
+		},
+		{
+			name:  "Simple regex non-match",
+			query: "name = /Tan.*/", 
+			json:  "{\"name\":\"John\"}", 
+			match: false,
+		},
+		{
+			name:  "Regex with negation",
+			query: "name != /Tan.*/", 
+			json:  "{\"name\":\"John\"}", 
+			match: true,
+		},
+		{
+			name:  "Regex with negation - false case",
+			query: "name != /Tan.*/", 
+			json:  "{\"name\":\"Tanya\"}", 
+			match: false,
+		},
+		{
+			name:  "Regex with special characters",
+			query: "email = /.*@.*\\.com$/", 
+			json:  "{\"email\":\"user@example.com\"}", 
+			match: true,
+		},
+		{
+			name:  "Regex with special characters - false case",
+			query: "email = /.*@.*\\.com$/", 
+			json:  "{\"email\":\"user@example.org\"}", 
+			match: false,
+		},
+		{
+			name:  "Regex with character classes",
+			query: "code = /[a-z][0-9]{3}/", 
+			json:  "{\"code\":\"a123\"}", 
+			match: true,
+		},
+		{
+			name:  "Regex with character classes - false case",
+			query: "code = /[a-z][0-9]{3}/", 
+			json:  "{\"code\":\"A123\"}", 
+			match: false,
+		},
+		{
+			name:  "Regex with AND condition",
+			query: "name = /J.*/ AND age > 30", 
+			json:  "{\"name\":\"John\", \"age\": 35}", 
+			match: true,
+		},
+		{
+			name:  "Regex with OR condition",
+			query: "name = /J.*/ OR age > 30", 
+			json:  "{\"name\":\"Tanya\", \"age\": 35}", 
+			match: true,
+		},
+		{
+			name:  "Regex with parentheses grouping",
+			query: "(name = /J.*/ OR name = /T.*/) AND age > 30", 
+			json:  "{\"name\":\"Tanya\", \"age\": 35}", 
+			match: true,
+		},
+		{
+			name:  "Regex with non-string value",
+			query: "age = /[0-9]+/", 
+			json:  "{\"age\": 35}", 
+			match: false, // Should fail because age is a number, not a string
+		},
+		{
+			name:  "Regex with simple forward slash",
+			query: "path = /foo\\/bar/", 
+			json:  "{\"path\":\"foo/bar\"}", 
+			match: true,
+		},
+		{
+			name:  "Regex with simple forward slash - false case",
+			query: "path = /foo\\/bar/", 
+			json:  "{\"path\":\"foo\\\\bar\"}", 
+			match: false,
+		},
+	}
+
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			
+			m, err := matcher.NewMatcher(tc.query)
+			require.NoError(err, "Failed to create matcher")
+
+			ctxMap := make(matcher.Context)
+			err = json.Unmarshal([]byte(tc.json), &ctxMap)
+			require.NoError(err, "Failed to unmarshal JSON")
+
+			// Test both regular and context-aware methods
+			ok, err := m.Test(&ctxMap)
+			if tc.name == "Regex with non-string value" {
+				assert.Error(err, "Expected error for regex on non-string value")
+			} else {
+				assert.NoError(err)
+				assert.Equal(tc.match, ok)
+			}
+
+			// Test with context
+			okWithCtx, err := m.TestWithContext(ctx, &ctxMap)
+			if tc.name == "Regex with non-string value" {
+				assert.Error(err, "Expected error for regex on non-string value")
+			} else {
+				assert.NoError(err)
+				assert.Equal(tc.match, okWithCtx)
+			}
+		})
+	}
+}
+
 func BenchmarkComplexMatcher(b *testing.B) {
 	b.ReportAllocs()
 	
