@@ -4,20 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/alecthomas/participle/v2"
 	"github.com/alecthomas/participle/v2/lexer"
 )
 
-// Boolean is a custom boolean type for parsing boolean values from query strings
-type Boolean bool
-
 // Context is a map of string keys to arbitrary values that can be evaluated against expressions
-type Context map[string]interface{}
+type Context map[string]any
 
 // ErrInvalidContext is returned when an invalid context is provided
 var ErrInvalidContext = errors.New("invalid context")
@@ -28,15 +25,6 @@ var ErrInvalidValue = errors.New("invalid value")
 // ErrInvalidOperator is returned when an unknown operator is encountered
 var ErrInvalidOperator = errors.New("invalid operator")
 
-// Capture implements the participle.Capture interface for Boolean
-func (b *Boolean) Capture(values []string) error {
-	if len(values) == 0 {
-		return errors.New("no values to capture")
-	}
-	*b = values[0] == "TRUE"
-	return nil
-}
-
 // Expression represents a parsed query expression with OR conditions
 type Expression struct {
 	Or []*OrCondition `parser:"@@ ( \"OR\" @@ )*"`
@@ -44,13 +32,23 @@ type Expression struct {
 
 // Eval evaluates the expression against the provided context
 // Returns true if any of the OR conditions evaluate to true
-func (e *Expression) Eval(ctx Context) (bool, error) {
+func (e *Expression) Eval(c Context) (bool, error) {
+	return e.EvalContext(context.Background(), c)
+}
+
+// EvalContext evaluates the expression against the provided context,
+// observing cancellation via the provided context.Context.
+// Returns true if any of the OR conditions evaluate to true
+func (e *Expression) EvalContext(ctx context.Context, c Context) (bool, error) {
 	if e == nil || len(e.Or) == 0 {
 		return false, nil
 	}
-	
+
 	for _, x := range e.Or {
-		result, err := x.Eval(ctx)
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		result, err := x.EvalContext(ctx, c)
 		if err != nil {
 			return false, fmt.Errorf("evaluating OR condition: %w", err)
 		}
@@ -68,13 +66,23 @@ type OrCondition struct {
 
 // Eval evaluates the AND conditions against the provided context
 // Returns true only if all AND conditions evaluate to true
-func (e *OrCondition) Eval(ctx Context) (bool, error) {
+func (e *OrCondition) Eval(c Context) (bool, error) {
+	return e.EvalContext(context.Background(), c)
+}
+
+// EvalContext evaluates the AND conditions against the provided context,
+// observing cancellation via the provided context.Context.
+// Returns true only if all AND conditions evaluate to true
+func (e *OrCondition) EvalContext(ctx context.Context, c Context) (bool, error) {
 	if e == nil || len(e.And) == 0 {
 		return false, nil
 	}
-	
+
 	for _, x := range e.And {
-		result, err := x.Eval(ctx)
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		result, err := x.EvalContext(ctx, c)
 		if err != nil {
 			return false, fmt.Errorf("evaluating AND condition: %w", err)
 		}
@@ -85,30 +93,51 @@ func (e *OrCondition) Eval(ctx Context) (bool, error) {
 	return true, nil
 }
 
-// Condition represents either a simple condition or a nested expression in parentheses
+// Condition represents either a simple condition or a nested expression in
+// parentheses, optionally negated with the NOT keyword
 type Condition struct {
+	Not bool `parser:"(@\"NOT\")? ("`
 	// Only one of these will be set
 	Nested    *Expression `parser:"  \"(\" @@ \")\""`
-	Predicate *Predicate  `parser:"| @@"`
+	Predicate *Predicate  `parser:"| @@ )"`
 }
 
 // Eval evaluates the condition against the provided context
-func (x *Condition) Eval(ctx Context) (bool, error) {
+func (x *Condition) Eval(c Context) (bool, error) {
+	return x.EvalContext(context.Background(), c)
+}
+
+// EvalContext evaluates the condition against the provided context,
+// observing cancellation via the provided context.Context.
+func (x *Condition) EvalContext(ctx context.Context, c Context) (bool, error) {
 	if x == nil {
 		return false, errors.New("invalid condition")
 	}
-	
-	// If this is a nested expression in parentheses, evaluate it
-	if x.Nested != nil {
-		return x.Nested.Eval(ctx)
-	}
-	
-	// Otherwise evaluate the predicate
-	if x.Predicate == nil {
+
+	var (
+		result bool
+		err    error
+	)
+
+	// If this is a nested expression in parentheses, evaluate it,
+	// otherwise evaluate the predicate
+	switch {
+	case x.Nested != nil:
+		result, err = x.Nested.EvalContext(ctx, c)
+	case x.Predicate != nil:
+		result, err = x.Predicate.EvalContext(ctx, c)
+	default:
 		return false, errors.New("invalid predicate")
 	}
-	
-	return x.Predicate.Eval(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	// NOT negates the condition result
+	if x.Not {
+		return !result, nil
+	}
+	return result, nil
 }
 
 // Predicate represents a simple condition with a symbol and comparison
@@ -118,68 +147,67 @@ type Predicate struct {
 }
 
 // Eval evaluates the predicate against the provided context
-func (p *Predicate) Eval(ctx Context) (bool, error) {
+func (p *Predicate) Eval(c Context) (bool, error) {
+	return p.EvalContext(context.Background(), c)
+}
+
+// EvalContext evaluates the predicate against the provided context,
+// observing cancellation via the provided context.Context.
+func (p *Predicate) EvalContext(ctx context.Context, c Context) (bool, error) {
 	if p == nil || p.Compare == nil {
 		return false, errors.New("invalid predicate")
 	}
-	
+
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
 	sym := p.Symbol
-	ctxVal, ok := ctx[sym]
+	ctxVal, ok := c[sym]
 	if !ok {
 		// Symbol not found in context, return false but not an error
 		return false, nil
 	}
 
+	// IN list membership: true if ctxVal equals any listed value
+	if p.Compare.In != nil {
+		for _, v := range p.Compare.In {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			ok, err := compareEqual(ctxVal, v)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	// CONTAINS: substring check for strings, element membership for slices
+	if p.Compare.Contains != nil {
+		return evalContains(ctx, ctxVal, p.Compare.Contains)
+	}
+
 	switch o := p.Compare.Operator; o {
 	case "=":
-		v := p.Compare.Value
-		switch {
-		case v.Float != nil:
-			switch x := ctxVal.(type) {
-			case float32, float64:
-				return x.(float64) == *v.Float, nil
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				return (float64)(x.(int)) == *v.Float, nil
-			case string:
-				return x == fmt.Sprintf("%f", *v.Float), nil
-			case bool:
-				return x && *v.Float != 0 || !x && *v.Float == 0, nil // 0 is false, otherwise true
-			}
-		case v.String != nil:
-			return ctxVal == *v.String, nil
-		case v.Regex != nil:
-			strVal, ok := ctxVal.(string)
-			if !ok {
-				return false, fmt.Errorf("cannot apply regex to non-string value: %T", ctxVal)
-			}
-			return v.Regex.Regexp.MatchString(strVal), nil
-		case v.Boolean != nil:
-			switch x := ctxVal.(type) {
-			case int:
-				return x == 0 && !(*v.Boolean) || x != 0 && (*v.Boolean), nil // 0 is false, otherwise true
-			case bool:
-				return x == *v.Boolean, nil
-			case string:
-				b, err := strconv.ParseBool(x)
-				if err != nil {
-					return false, fmt.Errorf("is not bool value:%s, %w", x, err)
-				}
-				return b == *v.Boolean, nil
-			}
-		default:
-			return false, fmt.Errorf("unknown value type: %#v", v)
-		}
+		return compareEqual(ctxVal, p.Compare.Value)
 	case "<>", "!=":
 		v := p.Compare.Value
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64:
-				return x.(float64) != *v.Float, nil
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				return (float64)(x.(int)) != *v.Float, nil
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				f, _ := toFloat(x)
+				return f != *v.Float, nil
 			case string:
-				return x != fmt.Sprintf("%f", *v.Float), nil
+				f, err := strconv.ParseFloat(x, 64)
+				if err != nil {
+					return true, nil
+				}
+				return f != *v.Float, nil
 			case bool:
 				return !(x && *v.Float != 0 || !x && *v.Float == 0), nil // 0 is false, otherwise true
 			}
@@ -200,10 +228,12 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 			case string:
 				b, err := strconv.ParseBool(x)
 				if err != nil {
-					return false, fmt.Errorf("is not bool value:%s, %w", x, err)
+					return false, fmt.Errorf("is not bool value: %s, %w", x, err)
 				}
 				return b != *v.Boolean, nil
 			}
+		case v.Null:
+			return ctxVal != nil, nil
 		default:
 			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
@@ -213,22 +243,28 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64:
-				return x.(float64) > *v.Float, nil
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				i := x.(int64)
-				return float64(i) > *v.Float, nil
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				f, _ := toFloat(x)
+				return f > *v.Float, nil
 			case string:
-				return string(x) > fmt.Sprintf("%f", *v.Float), nil
+				f, err := strconv.ParseFloat(x, 64)
+				if err != nil {
+					return false, fmt.Errorf("cannot compare non-numeric string %q with number", x)
+				}
+				return f > *v.Float, nil
 			case bool:
-				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+				return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 			}
 		case v.String != nil:
-			return ctxVal.(string) > *v.String, nil
+			strVal, ok := ctxVal.(string)
+			if !ok {
+				return false, fmt.Errorf("cannot compare string with non-string value: %T", ctxVal)
+			}
+			return strVal > *v.String, nil
 		case v.Regex != nil:
 			return false, fmt.Errorf("cannot use > operator with regex pattern")
 		case v.Boolean != nil:
-			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 		default:
 			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
@@ -238,22 +274,28 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64:
-				return x.(float64) >= *v.Float, nil
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				i := x.(int64)
-				return float64(i) >= *v.Float, nil
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				f, _ := toFloat(x)
+				return f >= *v.Float, nil
 			case string:
-				return string(x) >= fmt.Sprintf("%f", *v.Float), nil
+				f, err := strconv.ParseFloat(x, 64)
+				if err != nil {
+					return false, fmt.Errorf("cannot compare non-numeric string %q with number", x)
+				}
+				return f >= *v.Float, nil
 			case bool:
-				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+				return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 			}
 		case v.String != nil:
-			return ctxVal.(string) >= *v.String, nil
+			strVal, ok := ctxVal.(string)
+			if !ok {
+				return false, fmt.Errorf("cannot compare string with non-string value: %T", ctxVal)
+			}
+			return strVal >= *v.String, nil
 		case v.Regex != nil:
 			return false, fmt.Errorf("cannot use >= operator with regex pattern")
 		case v.Boolean != nil:
-			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 		default:
 			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
@@ -263,22 +305,28 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64:
-				return x.(float64) < *v.Float, nil
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				i := x.(int64)
-				return float64(i) < *v.Float, nil
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				f, _ := toFloat(x)
+				return f < *v.Float, nil
 			case string:
-				return string(x) < fmt.Sprintf("%f", *v.Float), nil
+				f, err := strconv.ParseFloat(x, 64)
+				if err != nil {
+					return false, fmt.Errorf("cannot compare non-numeric string %q with number", x)
+				}
+				return f < *v.Float, nil
 			case bool:
-				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+				return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 			}
 		case v.String != nil:
-			return ctxVal.(string) < *v.String, nil
+			strVal, ok := ctxVal.(string)
+			if !ok {
+				return false, fmt.Errorf("cannot compare string with non-string value: %T", ctxVal)
+			}
+			return strVal < *v.String, nil
 		case v.Regex != nil:
 			return false, fmt.Errorf("cannot use < operator with regex pattern")
 		case v.Boolean != nil:
-			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 		default:
 			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
@@ -288,22 +336,28 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 		switch {
 		case v.Float != nil:
 			switch x := ctxVal.(type) {
-			case float32, float64:
-				return x.(float64) <= *v.Float, nil
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				i := x.(int64)
-				return float64(i) <= *v.Float, nil
+			case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				f, _ := toFloat(x)
+				return f <= *v.Float, nil
 			case string:
-				return string(x) <= fmt.Sprintf("%f", *v.Float), nil
+				f, err := strconv.ParseFloat(x, 64)
+				if err != nil {
+					return false, fmt.Errorf("cannot compare non-numeric string %q with number", x)
+				}
+				return f <= *v.Float, nil
 			case bool:
-				return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+				return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 			}
 		case v.String != nil:
-			return ctxVal.(string) <= *v.String, nil
+			strVal, ok := ctxVal.(string)
+			if !ok {
+				return false, fmt.Errorf("cannot compare string with non-string value: %T", ctxVal)
+			}
+			return strVal <= *v.String, nil
 		case v.Regex != nil:
 			return false, fmt.Errorf("cannot use <= operator with regex pattern")
 		case v.Boolean != nil:
-			return false, fmt.Errorf("boolean did not compare by greater/less then: %#v", v)
+			return false, fmt.Errorf("boolean did not compare by greater/less than: %#v", v)
 		default:
 			return false, fmt.Errorf("unknown value type: %#v", v)
 		}
@@ -314,10 +368,127 @@ func (p *Predicate) Eval(ctx Context) (bool, error) {
 	return false, fmt.Errorf("failed to complete comparison, type: %T: %#v", ctxVal, ctxVal)
 }
 
-// Compare represents a comparison operation with an operator and value
+// compareEqual implements the equality semantics of the `=` operator.
+// It is shared by `=` and by the IN and CONTAINS operators.
+func compareEqual(ctxVal any, v *Value) (bool, error) {
+	switch {
+	case v.Float != nil:
+		switch x := ctxVal.(type) {
+		case float32, float64, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+			f, _ := toFloat(x)
+			return f == *v.Float, nil
+		case string:
+			f, err := strconv.ParseFloat(x, 64)
+			if err != nil {
+				return false, nil
+			}
+			return f == *v.Float, nil
+		case bool:
+			return x && *v.Float != 0 || !x && *v.Float == 0, nil // 0 is false, otherwise true
+		}
+	case v.String != nil:
+		return ctxVal == *v.String, nil
+	case v.Regex != nil:
+		strVal, ok := ctxVal.(string)
+		if !ok {
+			return false, fmt.Errorf("cannot apply regex to non-string value: %T", ctxVal)
+		}
+		return v.Regex.Regexp.MatchString(strVal), nil
+	case v.Boolean != nil:
+		switch x := ctxVal.(type) {
+		case int:
+			return x == 0 && !(*v.Boolean) || x != 0 && (*v.Boolean), nil // 0 is false, otherwise true
+		case bool:
+			return x == *v.Boolean, nil
+		case string:
+			b, err := strconv.ParseBool(x)
+			if err != nil {
+				return false, fmt.Errorf("is not bool value: %s, %w", x, err)
+			}
+			return b == *v.Boolean, nil
+		}
+	case v.Null:
+		return ctxVal == nil, nil
+	default:
+		return false, fmt.Errorf("unknown value type: %#v", v)
+	}
+	return false, fmt.Errorf("failed to complete comparison, type: %T: %#v", ctxVal, ctxVal)
+}
+
+// evalContains implements the CONTAINS operator: substring matching for string
+// context values, element membership for slices/arrays (using the same
+// equality semantics as IN). Other context value types are an error.
+func evalContains(ctx context.Context, ctxVal any, v *Value) (bool, error) {
+	if s, ok := ctxVal.(string); ok {
+		if v.String == nil {
+			return false, fmt.Errorf("CONTAINS on a string requires a string operand")
+		}
+		return strings.Contains(s, *v.String), nil
+	}
+
+	rv := reflect.ValueOf(ctxVal)
+	if rv.IsValid() && (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array) {
+		for i := 0; i < rv.Len(); i++ {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			ok, err := compareEqual(rv.Index(i).Interface(), v)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	return false, fmt.Errorf("CONTAINS not supported for %T", ctxVal)
+}
+
+// toFloat converts a numeric value to float64 for comparison.
+// Returns false if the value is not a numeric type.
+func toFloat(v any) (float64, bool) {
+	switch x := v.(type) {
+	case float32:
+		return float64(x), true
+	case float64:
+		return x, true
+	case int:
+		return float64(x), true
+	case int8:
+		return float64(x), true
+	case int16:
+		return float64(x), true
+	case int32:
+		return float64(x), true
+	case int64:
+		return float64(x), true
+	case uint:
+		return float64(x), true
+	case uint8:
+		return float64(x), true
+	case uint16:
+		return float64(x), true
+	case uint32:
+		return float64(x), true
+	case uint64:
+		return float64(x), true
+	default:
+		return 0, false
+	}
+}
+
+// Compare represents a comparison operation.
+// Exactly one of the three forms is set:
+//   - Operator+Value: a scalar comparison (=, !=, <>, >, >=, <, <=)
+//   - In: an IN list membership test
+//   - Contains: a CONTAINS substring/element-membership test
 type Compare struct {
-	Operator string `parser:"@( \"<>\" | \"<=\" | \">=\" | \"=\" | \"<\" | \">\" | \"!=\" )"`
-	Value    *Value `parser:"@@"`
+	Operator string   `parser:"( @( \"<>\" | \"<=\" | \">=\" | \"=\" | \"<\" | \">\" | \"!=\" )"`
+	Value    *Value   `parser:"    @@"`
+	In       []*Value `parser:"  | \"IN\" \"(\" @@ ( \",\" @@ )* \")\""`
+	Contains *Value   `parser:"  | \"CONTAINS\" @@ )"`
 }
 
 // Value represents a value that can be compared in a condition
@@ -333,8 +504,6 @@ type Value struct {
 const (
 	// MaxRegexPatternLength は正規表現パターンの最大長
 	MaxRegexPatternLength = 1000
-	// MaxRegexComplexity は正規表現の複雑さの最大値（繰り返し演算子の数）
-	MaxRegexComplexity = 20
 )
 
 // RegexVal represents a regular expression pattern
@@ -349,77 +518,66 @@ func (r *RegexVal) Capture(values []string) error {
 		return errors.New("no regex pattern to capture")
 	}
 	
-	// Remove the leading '/' and trailing '/' from the regex pattern
-	pattern := values[0]
-	if len(pattern) < 3 { // Need at least /x/
-		return fmt.Errorf("invalid regex pattern: %s", pattern)
+	token := values[0]
+	if len(token) < 3 { // Need at least /x/
+		return fmt.Errorf("invalid regex pattern: %s", token)
 	}
-	
-	// Extract the pattern between slashes
-	pattern = pattern[1 : len(pattern)-1]
-	
+
+	// Split off optional flags after the closing slash. The closing slash is
+	// always the last '/' in the token since slashes inside the pattern must
+	// be escaped (\/).
+	idx := strings.LastIndex(token, "/")
+	if idx <= 0 {
+		return fmt.Errorf("invalid regex pattern: %s", token)
+	}
+	pattern := token[1:idx]
+	flags := token[idx+1:]
+
+	// Only the 'i' (case-insensitive) flag is supported.
+	caseInsensitive := false
+	for _, f := range flags {
+		if f != 'i' {
+			return fmt.Errorf("unsupported regex flag %q in %s (only 'i' is supported)", f, token)
+		}
+		caseInsensitive = true
+	}
+
 	// エスケープされたスラッシュを処理
 	// Go の文字列リテラル内では \\ は \ に変換され、\\/は \/ になる
 	// 正規表現内では \/ はエスケープされたスラッシュを意味する
 	pattern = strings.ReplaceAll(pattern, "\\/", "/")
-	
+
 	// セキュリティチェック: パターンの長さ制限
 	if len(pattern) > MaxRegexPatternLength {
 		return fmt.Errorf("regex pattern too long: %d characters (max %d)", len(pattern), MaxRegexPatternLength)
 	}
-	
-	// セキュリティチェック: 複雑さの制限（繰り返し演算子の数をカウント）
-	complexity := strings.Count(pattern, "*") + strings.Count(pattern, "+") + 
-		strings.Count(pattern, "{") + strings.Count(pattern, "?") + 
-		strings.Count(pattern, "|")
-	if complexity > MaxRegexComplexity {
-		return fmt.Errorf("regex pattern too complex: %d complexity score (max %d)", complexity, MaxRegexComplexity)
-	}
-	
+
 	r.Pattern = pattern
-	
-	// Compile the regex pattern with timeout protection via context
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	
-	// 非同期でコンパイルを実行
-	ch := make(chan struct {
-		re  *regexp.Regexp
-		err error
-	})
-	go func() {
-		// パターンをコンパイルする前にデバッグ出力
-		fmt.Printf("Compiling regex pattern: %q\n", pattern)
-		re, err := regexp.Compile(pattern)
-		ch <- struct {
-			re  *regexp.Regexp
-			err error
-		}{re, err}
-	}()
-	
-	// タイムアウトまたは完了を待つ
-	select {
-	case result := <-ch:
-		if result.err != nil {
-			return fmt.Errorf("invalid regex pattern: %w", result.err)
-		}
-		r.Regexp = result.re
-	case <-ctx.Done():
-		return fmt.Errorf("regex compilation timed out: pattern may cause catastrophic backtracking")
+
+	if caseInsensitive {
+		pattern = "(?i)" + pattern
 	}
-	
+
+	// Go の regexp は RE2 ベースで後方参照や壊滅的バックトラッキングが
+	// 発生しないため、タイムアウト付きの非同期コンパイルは不要
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return fmt.Errorf("invalid regex pattern: %w", err)
+	}
+	r.Regexp = re
+
 	return nil
 }
 
 // NewParser creates a new participle parser for parsing query expressions
 func NewParser() *participle.Parser[Expression] {
 	qLexer := lexer.MustSimple([]lexer.SimpleRule{
-		{Name: "Keyword", Pattern: `(?i)TRUE|FALSE|AND|OR|NULL`},
+		{Name: "Keyword", Pattern: `(?i)(TRUE|FALSE|AND|OR|NOT|IN|CONTAINS|NULL)\b`},
 		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_]*`},
 		{Name: "Float", Pattern: `[-+]?\d*\.?\d+([eE][-+]?\d+)?`},
 		{Name: "String", Pattern: `'[^']*'|"[^"]*"`},
-		{Name: "Regex", Pattern: `/[^/\\]*(\\.[^/\\]*)*/`}, // Regex pattern between slashes, allowing escaped characters
-		{Name: "Operators", Pattern: `<>|!=|<=|>=|[-+*/%,.()=<>]`},
+		{Name: "Regex", Pattern: `/[^/\\]*(\\.[^/\\]*)*/[a-zA-Z]*`}, // Regex pattern between slashes, allowing escaped characters and trailing flags
+		{Name: "Operators", Pattern: `<>|!=|<=|>=|[(),=<>]`},
 		{Name: "whitespace", Pattern: `\s+`},
 	})
 	return participle.MustBuild[Expression](
