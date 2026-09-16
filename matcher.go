@@ -36,21 +36,17 @@ func NewMatcher(q string) (*Matcher, error) {
 
 // Test evaluates the matcher's expression against the provided context.
 func (m Matcher) Test(c *Context) (bool, error) {
-	if c == nil {
-		return false, fmt.Errorf("nil context provided")
-	}
-
-	if m.Debug {
-		repr.Println(m.Expression, repr.Indent("  "), repr.OmitEmpty(true))
-	}
-
-	return m.Expression.Eval(*c)
+	return m.TestWithContext(context.Background(), c)
 }
 
 // TestWithContext evaluates the matcher's expression with a cancellable context.
 func (m Matcher) TestWithContext(ctx context.Context, c *Context) (bool, error) {
 	if ctx == nil {
 		return false, fmt.Errorf("nil context.Context provided")
+	}
+
+	if c == nil {
+		return false, fmt.Errorf("nil context provided")
 	}
 
 	// Check for context cancellation
@@ -61,5 +57,9 @@ func (m Matcher) TestWithContext(ctx context.Context, c *Context) (bool, error) 
 		// Continue with evaluation
 	}
 
-	return m.Test(c)
+	if m.Debug {
+		repr.Println(m.Expression, repr.Indent("  "), repr.OmitEmpty(true))
+	}
+
+	return m.Expression.EvalContext(ctx, *c)
 }

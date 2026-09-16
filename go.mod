@@ -1,6 +1,6 @@
 module github.com/kuwa72/matcher
 
-go 1.22
+go 1.23
 
 require (
 	github.com/alecthomas/kong v0.8.1

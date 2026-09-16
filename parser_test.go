@@ -347,6 +347,241 @@ func TestRegexMatching(t *testing.T) {
 	}
 }
 
+// TestNumericContextTypes is a regression test for issue #2: comparing a
+// numeric literal against non-float64 numeric context values must not panic.
+// JSON unmarshalling always produces float64, so contexts are built directly.
+func TestNumericContextTypes(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		ctx   matcher.Context
+		match bool
+	}{
+		// = with various numeric types
+		{name: "int equality", query: "a = 1", ctx: matcher.Context{"a": int(1)}, match: true},
+		{name: "int64 equality", query: "a = 1", ctx: matcher.Context{"a": int64(1)}, match: true},
+		{name: "float32 equality", query: "a = 1", ctx: matcher.Context{"a": float32(1)}, match: true},
+		{name: "uint8 equality", query: "a = 1", ctx: matcher.Context{"a": uint8(1)}, match: true},
+		{name: "int64 inequality", query: "a = 2", ctx: matcher.Context{"a": int64(1)}, match: false},
+
+		// != with various numeric types
+		{name: "int64 not-equal true", query: "a != 2", ctx: matcher.Context{"a": int64(1)}, match: true},
+		{name: "uint not-equal false", query: "a != 1", ctx: matcher.Context{"a": uint(1)}, match: false},
+
+		// ordering operators with various numeric types
+		{name: "int greater than", query: "a > 0", ctx: matcher.Context{"a": int(1)}, match: true},
+		{name: "int64 greater than", query: "a > 0", ctx: matcher.Context{"a": int64(1)}, match: true},
+		{name: "uint greater than", query: "a > 0", ctx: matcher.Context{"a": uint(1)}, match: true},
+		{name: "int64 greater than or equal", query: "a >= 1", ctx: matcher.Context{"a": int64(1)}, match: true},
+		{name: "int32 less than", query: "a < 2", ctx: matcher.Context{"a": int32(1)}, match: true},
+		{name: "uint16 less than or equal", query: "a <= 1", ctx: matcher.Context{"a": uint16(1)}, match: true},
+		{name: "int8 less than false", query: "a < 1", ctx: matcher.Context{"a": int8(1)}, match: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			m, err := matcher.NewMatcher(tc.query)
+			require.NoError(err, "Failed to create matcher")
+
+			ok, err := m.Test(&tc.ctx)
+			assert.NoError(err)
+			assert.Equal(tc.match, ok)
+		})
+	}
+}
+
+// TestStringOrderingWithNonString is a regression test for issue #3: ordering
+// comparisons between a string literal and a non-string context value must
+// return an error instead of panicking.
+func TestStringOrderingWithNonString(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		ctx   matcher.Context
+	}{
+		{name: "greater than", query: `a > "x"`, ctx: matcher.Context{"a": 123}},
+		{name: "greater than or equal", query: `a >= "x"`, ctx: matcher.Context{"a": 123}},
+		{name: "less than", query: `a < "x"`, ctx: matcher.Context{"a": 123}},
+		{name: "less than or equal", query: `a <= "x"`, ctx: matcher.Context{"a": 123}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			m, err := matcher.NewMatcher(tc.query)
+			require.NoError(err, "Failed to create matcher")
+
+			_, err = m.Test(&tc.ctx)
+			assert.Error(err, "Expected error comparing string with non-string value")
+		})
+	}
+}
+
+// TestFloatLiteralVsStringContext is a regression test for issue #7: a numeric
+// literal compared against a string context value must parse the string and
+// compare numerically instead of comparing against a "%f"-formatted string.
+func TestFloatLiteralVsStringContext(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		ctx     matcher.Context
+		match   bool
+		wantErr bool
+	}{
+		{name: "equal numeric string", query: "a = 1", ctx: matcher.Context{"a": "1"}, match: true},
+		{name: "equal non-numeric string", query: "a = 1", ctx: matcher.Context{"a": "x"}, match: false},
+		{name: "not-equal non-numeric string", query: "a != 1", ctx: matcher.Context{"a": "x"}, match: true},
+		{name: "not-equal numeric string", query: "a != 1", ctx: matcher.Context{"a": "1"}, match: false},
+		{name: "not-equal numeric string <>", query: "a <> 1", ctx: matcher.Context{"a": "2"}, match: true},
+		{name: "greater than numeric string", query: "a > 0", ctx: matcher.Context{"a": "2"}, match: true},
+		{name: "greater than numeric string false", query: "a > 5", ctx: matcher.Context{"a": "2"}, match: false},
+		{name: "greater than non-numeric string", query: "a > 1", ctx: matcher.Context{"a": "x"}, wantErr: true},
+		{name: "greater-or-equal non-numeric string", query: "a >= 1", ctx: matcher.Context{"a": "x"}, wantErr: true},
+		{name: "less than numeric string", query: "a < 10", ctx: matcher.Context{"a": "2"}, match: true},
+		{name: "less than non-numeric string", query: "a < 1", ctx: matcher.Context{"a": "x"}, wantErr: true},
+		{name: "less-or-equal numeric string", query: "a <= 2", ctx: matcher.Context{"a": "2"}, match: true},
+		{name: "less-or-equal non-numeric string", query: "a <= 1", ctx: matcher.Context{"a": "x"}, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			m, err := matcher.NewMatcher(tc.query)
+			require.NoError(err, "Failed to create matcher")
+
+			ok, err := m.Test(&tc.ctx)
+			if tc.wantErr {
+				assert.Error(err, "Expected error comparing non-numeric string with number")
+			} else {
+				assert.NoError(err)
+				assert.Equal(tc.match, ok)
+			}
+		})
+	}
+}
+
+// TestWithContextCancellation is a regression test for issue #9:
+// TestWithContext must return the context error when the context is cancelled.
+func TestWithContextCancellation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
+	m, err := matcher.NewMatcher("a = 1")
+	require.NoError(err, "Failed to create matcher")
+
+	c := matcher.Context{"a": 1}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ok, err := m.TestWithContext(ctx, &c)
+	assert.ErrorIs(err, context.Canceled)
+	assert.False(ok)
+}
+
+// TestNotInContains covers issue #15: the NOT, IN and CONTAINS operators.
+func TestNotInContains(t *testing.T) {
+	cases := []struct {
+		name    string
+		query   string
+		ctx     matcher.Context
+		match   bool
+		wantErr bool
+	}{
+		// NOT
+		{name: "NOT true case", query: "NOT a = 1", ctx: matcher.Context{"a": 2}, match: true},
+		{name: "NOT false case", query: "NOT a = 1", ctx: matcher.Context{"a": 1}, match: false},
+		{name: "NOT grouped OR", query: "NOT (a = 1 OR b = 2)", ctx: matcher.Context{"a": 0, "b": 0}, match: true},
+		{name: "NOT grouped OR false", query: "NOT (a = 1 OR b = 2)", ctx: matcher.Context{"a": 0, "b": 2}, match: false},
+		{name: "lowercase not", query: "not a = 1", ctx: matcher.Context{"a": 1}, match: false},
+		{name: "NOT with AND", query: "NOT a = 1 AND b = 2", ctx: matcher.Context{"a": 2, "b": 2}, match: true},
+		{name: "NOT IN list", query: "NOT a IN (1, 2)", ctx: matcher.Context{"a": 3}, match: true},
+
+		// IN
+		{name: "IN numbers match", query: "a IN (1, 2, 3)", ctx: matcher.Context{"a": 2}, match: true},
+		{name: "IN numbers no match", query: "a IN (1, 2, 3)", ctx: matcher.Context{"a": 5}, match: false},
+		{name: "IN strings match", query: `s IN ("x", "y")`, ctx: matcher.Context{"s": "y"}, match: true},
+		{name: "IN strings no match", query: `s IN ("x", "y")`, ctx: matcher.Context{"s": "z"}, match: false},
+		{name: "IN with int64 context value", query: "a IN (1, 2)", ctx: matcher.Context{"a": int64(2)}, match: true},
+		{name: "lowercase in", query: "a in (1, 2)", ctx: matcher.Context{"a": 1}, match: true},
+		{name: "IN missing field", query: "missing IN (1, 2)", ctx: matcher.Context{"a": 1}, match: false},
+
+		// CONTAINS
+		{name: "CONTAINS substring", query: `tags CONTAINS "o"`, ctx: matcher.Context{"tags": "gopher"}, match: true},
+		{name: "CONTAINS substring no match", query: `tags CONTAINS "x"`, ctx: matcher.Context{"tags": "gopher"}, match: false},
+		{name: "CONTAINS slice element", query: `arr CONTAINS "x"`, ctx: matcher.Context{"arr": []any{"x", "y"}}, match: true},
+		{name: "CONTAINS slice no match", query: `arr CONTAINS "z"`, ctx: matcher.Context{"arr": []any{"x", "y"}}, match: false},
+		{name: "CONTAINS typed slice", query: "arr CONTAINS 2", ctx: matcher.Context{"arr": []int{1, 2, 3}}, match: true},
+		{name: "lowercase contains", query: `tags contains "o"`, ctx: matcher.Context{"tags": "gopher"}, match: true},
+		{name: "CONTAINS on number errors", query: `n CONTAINS "x"`, ctx: matcher.Context{"n": 123}, wantErr: true},
+		{name: "CONTAINS non-string operand on string errors", query: `tags CONTAINS 1`, ctx: matcher.Context{"tags": "gopher"}, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			m, err := matcher.NewMatcher(tc.query)
+			require.NoError(err, "Failed to create matcher")
+
+			ok, err := m.Test(&tc.ctx)
+			if tc.wantErr {
+				assert.Error(err)
+			} else {
+				assert.NoError(err)
+				assert.Equal(tc.match, ok)
+			}
+		})
+	}
+}
+
+// TestRegexFlags covers issue #16: case-insensitive regex matching with the
+// /pattern/i flag and rejection of unknown flags.
+func TestRegexFlags(t *testing.T) {
+	cases := []struct {
+		name     string
+		query    string
+		ctx      matcher.Context
+		match    bool
+		parseErr bool
+	}{
+		{name: "i flag matches different case", query: "name = /john/i", ctx: matcher.Context{"name": "John"}, match: true},
+		{name: "i flag matches same case", query: "name = /john/i", ctx: matcher.Context{"name": "johnny"}, match: true},
+		{name: "i flag non-match", query: "name = /john/i", ctx: matcher.Context{"name": "Tanya"}, match: false},
+		{name: "no flag stays case-sensitive", query: "name = /john/", ctx: matcher.Context{"name": "John"}, match: false},
+		{name: "i flag with negation", query: "name != /john/i", ctx: matcher.Context{"name": "John"}, match: false},
+		{name: "i flag with pattern metacharacters", query: `name = /^(john|jane)$/i`, ctx: matcher.Context{"name": "JANE"}, match: true},
+		{name: "invalid flag is a parse error", query: "name = /x/z", ctx: matcher.Context{"name": "x"}, parseErr: true},
+		{name: "multi-letter invalid flag is a parse error", query: "name = /x/ix", ctx: matcher.Context{"name": "x"}, parseErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			m, err := matcher.NewMatcher(tc.query)
+			if tc.parseErr {
+				assert.Error(err, "Expected parse error")
+				return
+			}
+			require.NoError(err, "Failed to create matcher")
+
+			ok, err := m.Test(&tc.ctx)
+			assert.NoError(err)
+			assert.Equal(tc.match, ok)
+		})
+	}
+}
+
 func BenchmarkComplexMatcher(b *testing.B) {
 	b.ReportAllocs()
 	
