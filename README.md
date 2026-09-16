@@ -7,7 +7,7 @@
 
 Matcher is a high-performance Go library that lets you filter data structures using a simple yet powerful query language. It supports complex expressions with regex patterns, logical operators, and parentheses grouping - perfect for filtering JSON data, in-memory collections, or implementing query capabilities in your APIs.
 
-*[日本語版はこちら](README-ja.md)*
+*English | [日本語](README-ja.md) | [中文](README-zh.md)*
 
 ## ✨ Highlights
 
@@ -78,8 +78,9 @@ Matcher uses an intuitive query language that's easy to learn yet powerful enoug
 
 ### Key Features
 
-* **Logical Operators**: `AND`, `OR` (case-insensitive)
+* **Logical Operators**: `AND`, `OR`, `NOT` (case-insensitive)
 * **Comparison Operators**: `=`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
+* **Membership Operators**: `IN` (value list), `CONTAINS` (substring / array element)
 * **Grouping**: Parentheses `()` for precise control over evaluation order
 * **Value Types**:
   * **Numbers**: Integers and floating-point values
@@ -90,7 +91,7 @@ Matcher uses an intuitive query language that's easy to learn yet powerful enoug
 
 ### Operator Precedence
 
-1. Comparisons (`=`, `!=`, etc.) are evaluated first
+1. Comparisons (`=`, `!=`, `IN`, `CONTAINS`, etc.) and `NOT` are evaluated first
 2. `AND` conditions are evaluated next
 3. `OR` conditions are evaluated last
 
@@ -108,6 +109,14 @@ country = "USA" OR country = "Canada"
 
 # Parentheses for grouping
 (status = "pending" OR status = "approved") AND created_at > "2025-01-01"
+
+# Negation with NOT
+NOT status = "archived"
+NOT (country = "USA" OR country = "Canada")
+
+# Membership with IN and CONTAINS
+status IN ("active", "pending")
+tags CONTAINS "golang"        # substring match on strings, element match on arrays
 
 # Complex nested expressions
 (category = "electronics" AND (price < 1000 OR rating > 4.5)) OR featured = TRUE
@@ -146,6 +155,7 @@ All regex operations include protection against ReDoS attacks and resource exhau
 ```
 field = /pattern/   # Match if field matches the pattern
 field != /pattern/  # Match if field does NOT match the pattern
+field = /pattern/i  # Case-insensitive match (i flag)
 ```
 
 ### 📌 Important Notes
@@ -154,6 +164,7 @@ field != /pattern/  # Match if field does NOT match the pattern
 - Works with equality (`=`) and inequality (`!=`, `<>`) operators
 - Applies only to string values
 - Escape forward slashes with backslash (`\/`)
+- Append `i` after the closing slash for case-insensitive matching (`/john/i`)
 
 ### 🌟 Regex Examples
 
