@@ -143,12 +143,11 @@ Matcher provides powerful regex pattern matching for string values, with built-i
 
 ### 🛡️ Security Features
 
-All regex operations include protection against ReDoS attacks and resource exhaustion:
+All regex matching runs on Go's RE2-based `regexp` engine:
 
+- **ReDoS-safe by design**: RE2 guarantees linear-time matching — catastrophic backtracking is structurally impossible. Backreferences and lookarounds are unsupported
 - **Pattern Length Limit**: Maximum 1000 characters per pattern
-- **Complexity Limit**: No more than 20 repetition operators (`*`, `+`, `{...}`, `?`, `|`)
-- **Compilation Timeout**: 100ms timeout prevents catastrophic backtracking
-- **Asynchronous Processing**: Non-blocking compilation in separate goroutines
+- **Cancellation**: `TestWithContext` can abort evaluation via `context.Context`
 
 ### 📋 Syntax
 
